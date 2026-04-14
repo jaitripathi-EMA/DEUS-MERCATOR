@@ -1,0 +1,90 @@
+//@version=6
+indicator("DEUS-TERMINAL: SNIPER EDITION", "DEUS-SNIPER", overlay = true, max_boxes_count = 500, max_lines_count = 500)
+
+// --- Sniper Settings ---
+group_sniper      = "Sniper Execution Logic"
+displacement_mult = input.float(1.5, "Displacement Multiplier", minval = 1.0, step = 0.1, group = group_sniper, tooltip = "Candle size must be X times larger than average")
+use_sessions      = input.bool(true, "Trade Only Kill-Zones (LDN/NY)", group = group_sniper, tooltip = "London Open (07:00-10:00 UTC) | NY Open (12:00-15:00 UTC)")
+
+// --- Institutional Data ---
+n   = bar_index
+atr = ta.atr(14)
+avg_body = ta.sma(math.abs(close - open), 20)
+
+// 1. Consolidated HTF Data (PDH/PDL/Trend)
+[pdh, pdl, d_trend] = request.security(syminfo.tickerid, "D", [high[1], low[1], ta.ema(close, 200)], lookahead = barmerge.lookahead_on)
+
+plot(pdh, "PDH", color.new(color.gray, 50), style = plot.style_stepline)
+plot(pdl, "PDL", color.new(color.gray, 50), style = plot.style_stepline)
+
+// 2. Liquidity Sweep Detection
+sweep_high = high > pdh and close < pdh
+sweep_low  = low < pdl and close > pdl
+
+// 3. Displacement Detection
+is_displaced = math.abs(close - open) > (avg_body * displacement_mult)
+
+// 4. Session Filter (Kill-Zones)
+is_london = not na(time(timeframe.period, "0700-1000", "UTC"))
+is_ny     = not na(time(timeframe.period, "1200-1500", "UTC"))
+time_ok   = not use_sessions or (is_london or is_ny)
+
+// 5. Sniper Logic Execution
+var float entry_p = na
+var float sl_p    = na
+var float tp_p    = na
+var int sniper_dir = 0 
+
+// Long Setup: Sweep Low + Displacement + Session
+long_trigger = sweep_low and is_displaced and time_ok and sniper_dir == 0
+if long_trigger
+    sniper_dir := 1
+    entry_p := close
+    sl_p    := low - (atr * 0.5)
+    tp_p    := entry_p + (math.abs(entry_p - sl_p) * 3.0)
+    label.new(n, low, "SNIPER BUY\nLiquidity Swept", color = #089981, textcolor = color.white, style = label.style_label_up)
+
+// Short Setup: Sweep High + Displacement + Session
+short_trigger = sweep_high and is_displaced and time_ok and sniper_dir == 0
+if short_trigger
+    sniper_dir := -1
+    entry_p := close
+    sl_p    := high + (atr * 0.5)
+    tp_p    := entry_p - (math.abs(entry_p - sl_p) * 3.0)
+    label.new(n, high, "SNIPER SELL\nLiquidity Swept", color = #f23645, textcolor = color.white, style = label.style_label_down)
+
+// --- Probability Calculation ---
+float prob = 0.0
+if sniper_dir != 0
+    prob += 40 
+    if is_displaced
+        prob += 20 
+    if time_ok
+        prob += 20 
+    if (sniper_dir == 1 and close > d_trend) or (sniper_dir == -1 and close < d_trend)
+        prob += 20
+
+// Reset logic
+if sniper_dir == 1 and (low < sl_p or high > tp_p)
+    sniper_dir := 0
+else if sniper_dir == -1 and (high > sl_p or low < tp_p)
+    sniper_dir := 0
+
+// --- Dashboard ---
+if barstate.islast
+    var table dash = table.new(position.top_right, 2, 6, bgcolor = #0d001a, border_color = #cc00ff, border_width = 1)
+    table.cell(dash, 0, 0, "SNIPER TERMINAL", text_color = color.orange, bgcolor = #1a0030)
+    table.cell(dash, 1, 0, "Wait for 90%+", text_color = color.white, bgcolor = #1a0030)
+    
+    table.cell(dash, 0, 1, "Market Session", text_color = color.gray)
+    table.cell(dash, 1, 1, time_ok ? "KILL-ZONE OPEN" : "OUTSIDE HOURS", text_color = time_ok ? color.lime : color.red)
+
+    table.cell(dash, 0, 2, "Win Probability", text_color = color.gray)
+    table.cell(dash, 1, 2, str.tostring(math.round(prob)) + "%", text_color = prob >= 90 ? color.lime : color.white)
+
+    table.cell(dash, 0, 3, "Action", bgcolor = #1a0030)
+    table.cell(dash, 1, 3, prob >= 90 ? "SNIPER ENTRY" : "PATIENCE...", text_color = prob >= 90 ? color.lime : color.orange, bgcolor = #1a0030)
+
+// Visuals
+plot(sniper_dir != 0 ? sl_p : na, "Stop Loss", color = color.new(color.red, 0), style = plot.style_linebr, linewidth = 2)
+plot(sniper_dir != 0 ? tp_p : na, "Take Profit", color = color.new(color.lime, 0), style = plot.style_linebr, linewidth = 2)
