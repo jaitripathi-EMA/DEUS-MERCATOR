@@ -1,0 +1,563 @@
+//@version=6
+indicator("DEUS-TERMINAL", "DEUS-TERMINAL", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+//─────────────────────────────────────────────────────────────────────────────
+// SETTINGS
+//─────────────────────────────────────────────────────────────────────────────
+filterWidth = input.float(0., 'FVG Width Filter', minval = 0, step = .1)
+
+// Trailing Stop
+tsReset = input.string('Every Signals', 'Reset Trailing Stop', options = ['Every Signals', 'Inverse Signals'], group = 'Trailing Stop')
+tsMult = input(3., 'Multiplier', group = 'Trailing Stop')
+
+// Style
+showBull = input(true, 'Bullish IMFVG', inline = 'bull', group = 'Style')
+bullCss  = input(color.teal, '', inline = 'bull', group = 'Style')
+bullAvg  = input(true, 'Average', inline = 'bull', group = 'Style')
+
+showBear = input(true, 'Bearish IMFVG', inline = 'bear', group = 'Style')
+bearCss  = input(color.new(#f23645, 0), '', inline = 'bear', group = 'Style')
+bearAvg  = input(true, 'Average', inline = 'bear', group = 'Style')
+
+// Dashboard
+showDash    = input(true,  'Show Dashboard',  group = 'Dashboard')
+compactMode = input(false, 'Compact View  ▲▼ (toggle to fold/unfold)', group = 'Dashboard')
+dashPos     = input.string('Top Right', 'Position', options = ['Top Right', 'Top Left', 'Bottom Right', 'Bottom Left'], group = 'Dashboard')
+
+// Astro Settings
+isBhadra = input.bool(false, 'Is Bhadra (Vishti Karana) Active Today?', group = 'Astro-Market Filters', tooltip="Check this box if today has a Bhadra window to force a 0% AVOID state.")
+
+// Asset DNA Settings
+group_dna = "Asset DNA Mode"
+asset_mode = input.string("GOLD", "Target Asset", options=["GOLD", "CRYPTO", "FOREX"], group=group_dna)
+
+//─────────────────────────────────────────────────────────────────────────────
+// ASTRO-MARKET TIME ENGINE (IST UTC+5:30)
+//─────────────────────────────────────────────────────────────────────────────
+y   = year(time, "UTC+5:30")
+m   = month(time, "UTC+5:30")
+d   = dayofmonth(time, "UTC+5:30")
+hr  = hour(time, "UTC+5:30")
+mn  = minute(time, "UTC+5:30")
+dow = dayofweek(time, "UTC+5:30")
+
+// 1. Vedic Intraday: Proactive Rahu Kaal Tracker
+var int rk_start = 0
+var int rk_end   = 0
+var string rk_time_str = ""
+
+if dow == dayofweek.sunday
+    rk_start := 16*60 + 30
+    rk_end   := 18*60
+    rk_time_str := "16:30 - 18:00"
+else if dow == dayofweek.monday
+    rk_start := 7*60 + 30
+    rk_end   := 9*60
+    rk_time_str := "07:30 - 09:00"
+else if dow == dayofweek.tuesday
+    rk_start := 15*60
+    rk_end   := 16*60 + 30
+    rk_time_str := "15:00 - 16:30"
+else if dow == dayofweek.wednesday
+    rk_start := 12*60
+    rk_end   := 13*60 + 30
+    rk_time_str := "12:00 - 13:30"
+else if dow == dayofweek.thursday
+    rk_start := 13*60 + 30
+    rk_end   := 15*60
+    rk_time_str := "13:30 - 15:00"
+else if dow == dayofweek.friday
+    rk_start := 10*60 + 30
+    rk_end   := 12*60
+    rk_time_str := "10:30 - 12:00"
+else if dow == dayofweek.saturday
+    rk_start := 9*60
+    rk_end   := 10*60 + 30
+    rk_time_str := "09:00 - 10:30"
+
+current_mins = hr * 60 + mn
+isRahuKaal   = false
+string rk_txt = ""
+color  rk_clr = color.gray
+
+if current_mins < rk_start
+    rk_txt := "Upcoming (" + rk_time_str + ")"
+    rk_clr := color.yellow
+else if current_mins >= rk_start and current_mins < rk_end
+    isRahuKaal := true
+    rk_txt := "ACTIVE AVOID (" + rk_time_str + ")"
+    rk_clr := color.red
+else
+    rk_txt := "Completed (Safe)"
+    rk_clr := color.new(color.white, 50)
+
+// 2. Lunar Phase Engine (Q2 2026)
+isAmavasya = (m == 3 and d >= 16 and d <= 20) or (m == 4 and d >= 15 and d <= 19) or (m == 5 and d >= 14 and d <= 18) or (m == 6 and d >= 12 and d <= 16)
+isPurnima  = (m == 3 and d >= 30) or (m == 4 and d <= 4) or (m == 4 and d >= 30) or (m == 5 and d <= 4) or (m == 5 and d >= 29) or (m == 6 and d <= 2)
+
+// 3. Seasonal Engine
+isHalloween = (m <= 4) or (m >= 11)
+isSellInMay = (m >= 5 and m <= 10)
+
+// April 2026 Specific Power Windows 
+isPushya = (time >= timestamp(2026, 04, 23, 20, 58) and time <= timestamp(2026, 04, 24, 20, 15))
+isMercuryShadow = (time <= timestamp(2026, 04, 09, 23, 59))
+
+// 4. Determine Master Astro Signal (Asset-Aware Logic)
+astro_txt = "Macro: HOLD/NEUTRAL"
+astro_clr = color.yellow
+astro_dir = 0 
+string astro_expiry = "Ongoing"
+
+if isPurnima
+    astro_txt := "PURNIMA PEAK (SELL)"
+    astro_clr := color.red
+    astro_dir := -1
+    astro_expiry := (m == 3 or (m == 4 and d <= 4)) ? "Ends Apr 4" : ((m == 4 and d >= 30) or (m == 5 and d <= 4)) ? "Ends May 4" : "Ends Jun 2"
+else if isAmavasya
+    astro_txt := "AMAVASYA (AVOID)"
+    astro_clr := color.red
+    astro_dir := -99
+    astro_expiry := (m == 3) ? "Ends Mar 20" : (m == 4) ? "Ends Apr 19" : (m == 5) ? "Ends May 18" : "Ends Jun 16"
+else if isHalloween
+    if asset_mode == "GOLD"
+        astro_txt := "EQUITY RISK-ON (GOLD NEUTRAL)"
+        astro_clr := color.yellow
+        astro_dir := 0
+    else if asset_mode == "CRYPTO"
+        astro_txt := "Q4/Q1 CRYPTO CYCLE (BUY)"
+        astro_clr := color.lime
+        astro_dir := 1
+    else
+        astro_txt := "HALLOWEEN SEASON (BUY)"
+        astro_clr := color.lime
+        astro_dir := 1
+    astro_expiry := "Ends Apr 30"
+else if isSellInMay
+    if asset_mode == "GOLD"
+        astro_txt := "EQUITY RISK-OFF (GOLD BULLISH)"
+        astro_clr := color.lime
+        astro_dir := 1
+    else
+        astro_txt := "SELL IN MAY (REDUCE)"
+        astro_clr := color.orange
+        astro_dir := -1
+    astro_expiry := "Ends Oct 31"
+
+//─────────────────────────────────────────────────────────────────────────────
+// CORE FUNCTIONS & FVG SIGNALS
+//─────────────────────────────────────────────────────────────────────────────
+n   = bar_index
+atr = nz(ta.atr(200))
+
+filter(a, b) => a - b > atr * filterWidth
+
+trailing_stop(trigger, trend, mult) =>
+    var float ts      = na
+    var bool  reached = false
+    if trigger
+        ts      := trend == 1 ? close - atr * mult : close + atr * mult
+        reached := false
+    else
+        ts := switch trend
+            1 => close - ts > atr * mult ? close - atr * mult : ts
+            0 => ts - close > atr * mult ? close + atr * mult : ts
+            => ts 
+        if close < ts and trend == 1
+            reached := true
+        else if close > ts and trend == 0
+            reached := true
+    [ts, reached]
+
+var line bull_line        = na
+var bool bull_lvl_reached = false
+var line bear_line        = na
+var bool bear_lvl_reached = false
+var int  os               = 0
+
+bull = low[3] > high[1] and close[2] < low[3] and close > low[3] and filter(low[3], high[1]) and showBull
+bear = low[1] > high[3] and close[2] > high[3] and close < high[3] and filter(low[1], high[3]) and showBear
+
+if bull
+    box.new(n-3, low[3], n, high[1], na, bgcolor = color.new(bullCss, 50))
+    avg = math.avg(low[3], high[1])
+    if bullAvg
+        bull_line := line.new(n, avg, n, avg, color = bullCss, style = line.style_dashed)
+    label.new(n, low, '▲', color = na, textcolor = bullCss, style = label.style_label_up, size = size.small)
+    os               := 1
+    bull_lvl_reached := false
+
+if bear
+    box.new(n-3, low[1], n, high[3], na, bgcolor = color.new(bearCss, 50))
+    avg = math.avg(low[1], high[3])
+    if bearAvg
+        bear_line := line.new(n, avg, n, avg, color = bearCss, style = line.style_dashed)
+    label.new(n, high, '▼', color = na, textcolor = bearCss, style = label.style_label_down, size = size.small)
+    os               := 0
+    bear_lvl_reached := false
+
+if not na(bull_line) and not bull_lvl_reached
+    bull_line.set_x2(n)
+if not na(bear_line) and not bear_lvl_reached
+    bear_line.set_x2(n)
+
+if not na(bull_line) and close < bull_line.get_y2()
+    bull_lvl_reached := true
+if not na(bear_line) and close > bear_line.get_y2()
+    bear_lvl_reached := true
+
+ts_reset          = tsReset == 'Every Signals' ? bull or bear : os != os[1]
+[ts, ts_reached]  = trailing_stop(ts_reset, os, tsMult)
+
+//─────────────────────────────────────────────────────────────────────────────
+// SMC + STRICT DUAL EMA MTF CONFLUENCE ENGINE
+//─────────────────────────────────────────────────────────────────────────────
+mtf_calc() =>
+    ph = ta.pivothigh(high, 50, 50)
+    pl = ta.pivotlow(low, 50, 50)
+    var float last_ph = na
+    var float last_pl = na
+    if not na(ph)
+        last_ph := ph
+    if not na(pl)
+        last_pl := pl
+        
+    var int smc_trend = 1
+    if ta.crossover(close, last_ph)
+        smc_trend := 1 
+    if ta.crossunder(close, last_pl)
+        smc_trend := -1 
+        
+    ema50  = ta.ema(close, 50)
+    ema107 = ta.ema(close, 107)
+    ema154 = ta.ema(close, 154)
+    
+    buy_ema  = ema50 > ema154
+    sell_ema = ema50 < ema107
+    is_conflicting = buy_ema and sell_ema 
+    
+    int state = 0
+    if is_conflicting
+        state := 0 
+    else if smc_trend == 1 and buy_ema
+        state := 1
+    else if smc_trend == -1 and sell_ema
+        state := -1
+    state 
+
+daily_trend = request.security(syminfo.tickerid, "D",   mtf_calc(), lookahead = barmerge.lookahead_off)
+h4_trend    = request.security(syminfo.tickerid, "240", mtf_calc(), lookahead = barmerge.lookahead_off)
+h1_trend    = request.security(syminfo.tickerid, "60",  mtf_calc(), lookahead = barmerge.lookahead_off)
+m5_trend    = request.security(syminfo.tickerid, "5",   mtf_calc(), lookahead = barmerge.lookahead_off)
+
+trendTxt(t) => t == 1 ? "Bullish" : t == -1 ? "Bearish" : "Capital Protection"
+trendClr(t) => t == 1 ? color.teal : t == -1 ? color.red : color.orange
+
+track_shift(trend, tf_name) =>
+    var int prev_trend = trend
+    var string shift_msg = "Waiting for shift..."
+    if trend != prev_trend and not na(prev_trend)
+        shift_msg := "At " + str.format("{0,date,MM-dd HH:mm}", time) + "\n" + tf_name + ": " + trendTxt(prev_trend) + " -> " + trendTxt(trend)
+        prev_trend := trend
+    else if na(prev_trend)
+        prev_trend := trend
+    shift_msg
+
+track_astro(current_sig) =>
+    var string prev_sig = current_sig
+    var string shift_msg = "Waiting for shift..."
+    if current_sig != prev_sig and prev_sig != ""
+        shift_msg := "At " + str.format("{0,date,MM-dd HH:mm}", time) + "\nShift: " + prev_sig + " -> " + current_sig
+        prev_sig := current_sig
+    else if prev_sig == ""
+        prev_sig := current_sig
+    shift_msg
+
+daily_shift = track_shift(daily_trend, "Daily")
+h4_shift    = track_shift(h4_trend, "4H")
+h1_shift    = track_shift(h1_trend, "1H")
+m5_shift    = track_shift(m5_trend, "5M")
+astro_shift = track_astro(astro_txt)
+
+atr_pct = (atr / close) * 100
+sig_txt = os == 1 ? "HP-UP  Active" : "HP-DOWN Active"
+sig_clr = os == 1 ? color.teal : color.red
+
+//─────────────────────────────────────────────────────────────────────────────
+// EXACT DECOUPLED PROBABILITY ENGINE (DUAL-VECTOR MATH)
+//─────────────────────────────────────────────────────────────────────────────
+float bull_prob = 0.0
+float bear_prob = 0.0
+
+// Daily Weight (11%)
+if daily_trend == 1
+    bull_prob += 11.0
+else if daily_trend == -1
+    bear_prob += 11.0
+
+// 4H Weight (25%)
+if h4_trend == 1
+    bull_prob += 25.0
+else if h4_trend == -1
+    bear_prob += 25.0
+
+// 1H Weight (20%)
+if h1_trend == 1
+    bull_prob += 20.0
+else if h1_trend == -1
+    bear_prob += 20.0
+
+// 5M Weight (17%)
+if m5_trend == 1
+    bull_prob += 17.0
+else if m5_trend == -1
+    bear_prob += 17.0
+
+// FVG Signal Weight (19%) - No longer a strict gatekeeper!
+if os == 1
+    bull_prob += 19.0
+else if os == 0
+    bear_prob += 19.0
+
+// Astro Weight (8%) - Scalar applies to both if neutral
+if astro_dir == 1
+    bull_prob += 8.0
+else if astro_dir == -1
+    bear_prob += 8.0
+else if astro_dir == 0
+    bull_prob += 8.0
+    bear_prob += 8.0
+
+// Determine the Dominant Direction and Final Probability
+int dom_dir = bull_prob >= bear_prob ? 1 : -1
+float final_prob = bull_prob >= bear_prob ? bull_prob : bear_prob
+
+// Update Confluence Counter based on FVG Signal Direction
+int sig_dir_fvg = os == 1 ? 1 : -1
+tf_count = (daily_trend == sig_dir_fvg ? 1 : 0) + (h4_trend == sig_dir_fvg ? 1 : 0) + (h1_trend == sig_dir_fvg ? 1 : 0) + (m5_trend == sig_dir_fvg ? 1 : 0)
+conf_txt = str.tostring(tf_count) + "/4 TF Aligned"
+conf_clr = tf_count >= 3 ? color.lime : tf_count == 2 ? color.yellow : color.red
+
+//─────────────────────────────────────────────────────────────────────────────
+// ASSET DNA TRACKER (ACTION & CATEGORIZATION ONLY - NO WEIGHTAGE)
+//─────────────────────────────────────────────────────────────────────────────
+string dna_msg = "Asset: " + asset_mode + " (NEUTRAL/HOLD)"
+string dna_expiry = "Ongoing"
+color dna_clr = color.yellow
+
+if asset_mode == "GOLD"
+    if isPushya
+        dna_msg := "GOLD: PUSHYA WINDOW (STRONG BUY)"
+        dna_expiry := "Ends Apr 24, 20:15 IST"
+        dna_clr := color.lime
+    else if isPurnima
+        dna_msg := "GOLD: LUNAR RESISTANCE (SELL / AVOID)"
+        dna_expiry := "Ends Apr 4 (Next: Apr 30)"
+        dna_clr := color.red
+if asset_mode == "CRYPTO"
+    if isMercuryShadow
+        dna_msg := "CRYPTO: MERCURY SHADOW (AVOID / REDUCE)"
+        dna_expiry := "Ends Apr 9, 23:59 IST"
+        dna_clr := color.red
+    else if isHalloween
+        dna_msg := "CRYPTO: Q4/Q1 MOMENTUM (BUY)"
+        dna_expiry := "Ends Apr 30"
+        dna_clr := color.lime
+
+track_dna(current_sig) =>
+    var string prev_sig = current_sig
+    var string shift_msg = "Waiting for shift..."
+    if current_sig != prev_sig and prev_sig != ""
+        shift_msg := "At " + str.format("{0,date,MM-dd HH:mm}", time) + "\nShift: " + prev_sig + " ->\n" + current_sig
+        prev_sig := current_sig
+    else if prev_sig == ""
+        prev_sig := current_sig
+    shift_msg
+
+dna_shift = track_dna(dna_msg)
+
+//─────────────────────────────────────────────────────────────────────────────
+// FINAL VERDICT LOGIC
+//─────────────────────────────────────────────────────────────────────────────
+bool is_cpt_active = (daily_trend == 0 or h4_trend == 0 or h1_trend == 0 or m5_trend == 0)
+
+string verdict_txt = "WAIT / NO TRADE"
+color verdict_clr  = color.gray
+
+// The Kill Switches 
+if isRahuKaal or isBhadra or astro_dir == -99
+    final_prob := 0.0
+    verdict_txt := "AVOID ZONE"
+    verdict_clr := color.red
+else if is_cpt_active
+    final_prob := 0.0
+    verdict_txt := "CAPITAL PROTECTION (CPT)"
+    verdict_clr := color.orange
+else if final_prob >= 75
+    verdict_txt := dom_dir == 1 ? "STRONG BUY" : "STRONG SELL"
+    verdict_clr := dom_dir == 1 ? color.lime : color.new(color.red, 0)
+else if final_prob >= 50
+    verdict_txt := dom_dir == 1 ? "BUY" : "SELL"
+    verdict_clr := dom_dir == 1 ? color.teal : color.maroon
+
+track_verdict(current_sig) =>
+    var string prev_sig = current_sig
+    var string shift_msg = "Waiting for shift..."
+    if current_sig != prev_sig and prev_sig != ""
+        shift_msg := "At " + str.format("{0,date,MM-dd HH:mm}", time) + "\nChanged from: " + prev_sig + " -> " + current_sig
+        prev_sig := current_sig
+    else if prev_sig == ""
+        prev_sig := current_sig
+    shift_msg
+
+verdict_shift = track_verdict(verdict_txt)
+
+//─────────────────────────────────────────────────────────────────────────────
+// UI DISPLAY HELPERS  (display-only — zero logic impact)
+//─────────────────────────────────────────────────────────────────────────────
+// Dot prefix for trend cells
+trendDot(t) => t == 1 ? "● " : t == -1 ? "● " : "◌ "
+
+// Unicode probability bar  ████████░░  (10 blocks)
+prob_int   = math.round(final_prob)
+prob_filled = math.round(prob_int / 10)
+prob_bar   = (prob_filled >= 1  ? "█" : "░") + (prob_filled >= 2  ? "█" : "░") +
+             (prob_filled >= 3  ? "█" : "░") + (prob_filled >= 4  ? "█" : "░") +
+             (prob_filled >= 5  ? "█" : "░") + (prob_filled >= 6  ? "█" : "░") +
+             (prob_filled >= 7  ? "█" : "░") + (prob_filled >= 8  ? "█" : "░") +
+             (prob_filled >= 9  ? "█" : "░") + (prob_filled >= 10 ? "█" : "░") +
+             "  " + str.tostring(prob_int) + "%"
+
+// Confluence pips  ●●○○
+pip1 = tf_count >= 1 ? "●" : "○"
+pip2 = tf_count >= 2 ? "●" : "○"
+pip3 = tf_count >= 3 ? "●" : "○"
+pip4 = tf_count >= 4 ? "●" : "○"
+conf_pips = pip1 + pip2 + pip3 + pip4 + "  " + conf_txt
+
+//─────────────────────────────────────────────────────────────────────────────
+// DASHBOARD TABLE
+//─────────────────────────────────────────────────────────────────────────────
+HEADER_BG  = color.new(#1a0030, 5)
+ROW_BG     = color.new(#0d001a, 10)
+ALT_BG     = color.new(#130025, 10)
+BORDER_CLR = color.new(#cc00ff, 55)
+FRAME_CLR  = color.new(#ff00cc, 35)
+LABEL_CLR  = color.new(#ff9900, 0)
+WHITE_CLR  = color.new(#ffffff, 0)
+TEXT_CLR   = color.new(#d1d4dc, 20)
+
+var table dash = na
+
+if showDash and barstate.islast
+    tpos = switch dashPos
+        'Top Right'    => position.top_right
+        'Top Left'     => position.top_left
+        'Bottom Right' => position.bottom_right
+        => position.bottom_left
+
+    // ── COMPACT VIEW: 4 rows only ──────────────────────────────────────────
+    if compactMode
+        dash := table.new(tpos, 3, 4, bgcolor = ROW_BG, border_color = BORDER_CLR, border_width = 1, frame_color = FRAME_CLR, frame_width = 2)
+
+        // Row 0 — Header strip
+        table.cell(dash, 0, 0, 'DEUS ▲▼', text_color = color.orange, text_size = size.small, bgcolor = HEADER_BG, text_halign = text.align_left)
+        table.cell(dash, 1, 0, verdict_txt, text_color = verdict_clr, text_size = size.small, bgcolor = HEADER_BG, text_halign = text.align_center)
+        table.cell(dash, 2, 0, str.tostring(prob_int) + '%', text_color = verdict_clr, text_size = size.small, bgcolor = HEADER_BG, text_halign = text.align_right)
+
+        // Row 1 — Probability bar
+        table.cell(dash, 0, 1, 'Probability', text_color = LABEL_CLR, text_size = size.tiny, bgcolor = ROW_BG)
+        table.cell(dash, 1, 1, prob_bar, text_color = verdict_clr, text_size = size.tiny, bgcolor = ROW_BG)
+        table.merge_cells(dash, 1, 1, 2, 1)
+
+        // Row 2 — Confluence pips
+        table.cell(dash, 0, 2, 'Confluence', text_color = LABEL_CLR, text_size = size.tiny, bgcolor = ALT_BG)
+        table.cell(dash, 1, 2, conf_pips, text_color = conf_clr, text_size = size.tiny, bgcolor = ALT_BG)
+        table.merge_cells(dash, 1, 2, 2, 2)
+
+        // Row 3 — Rahu + DNA quick status
+        rk_icon = isRahuKaal ? "⚠ RAHU" : "✓ Safe"
+        rk_icon_clr = isRahuKaal ? color.red : color.new(color.white, 50)
+        table.cell(dash, 0, 3, rk_icon, text_color = rk_icon_clr, text_size = size.tiny, bgcolor = ROW_BG)
+        table.cell(dash, 1, 3, dna_msg, text_color = dna_clr, text_size = size.tiny, bgcolor = ROW_BG)
+        table.merge_cells(dash, 1, 3, 2, 3)
+
+    // ── FULL VIEW: all 14 rows ─────────────────────────────────────────────
+    else
+        dash := table.new(tpos, 3, 14, bgcolor = ROW_BG, border_color = BORDER_CLR, border_width = 1, frame_color = FRAME_CLR, frame_width = 2)
+
+        // Row 0 — Header
+        table.cell(dash, 0, 0, 'DEUS-TERMINAL💵', text_color = color.orange, text_size = size.normal, bgcolor = HEADER_BG, text_halign = text.align_center)
+        table.cell(dash, 1, 0, 'Active Trend', text_color = color.lime, text_size = size.normal, bgcolor = HEADER_BG, text_halign = text.align_center)
+        table.cell(dash, 2, 0, 'Last Shift Log', text_color = color.yellow, text_size = size.normal, bgcolor = HEADER_BG, text_halign = text.align_center)
+
+        // Rows 1-4 — Timeframe trends with dot prefix
+        table.cell(dash, 0, 1, 'Daily (11%)', text_color = LABEL_CLR, text_size = size.small, bgcolor = ROW_BG)
+        table.cell(dash, 1, 1, trendDot(daily_trend) + trendTxt(daily_trend), text_color = trendClr(daily_trend), text_size = size.small, bgcolor = ROW_BG)
+        table.cell(dash, 2, 1, daily_shift, text_color = TEXT_CLR, text_size = size.small, bgcolor = ROW_BG)
+
+        table.cell(dash, 0, 2, '4H (25%)', text_color = LABEL_CLR, text_size = size.small, bgcolor = ALT_BG)
+        table.cell(dash, 1, 2, trendDot(h4_trend) + trendTxt(h4_trend), text_color = trendClr(h4_trend), text_size = size.small, bgcolor = ALT_BG)
+        table.cell(dash, 2, 2, h4_shift, text_color = TEXT_CLR, text_size = size.small, bgcolor = ALT_BG)
+
+        table.cell(dash, 0, 3, '1H (20%)', text_color = LABEL_CLR, text_size = size.small, bgcolor = ROW_BG)
+        table.cell(dash, 1, 3, trendDot(h1_trend) + trendTxt(h1_trend), text_color = trendClr(h1_trend), text_size = size.small, bgcolor = ROW_BG)
+        table.cell(dash, 2, 3, h1_shift, text_color = TEXT_CLR, text_size = size.small, bgcolor = ROW_BG)
+
+        table.cell(dash, 0, 4, '5M (17%)', text_color = LABEL_CLR, text_size = size.small, bgcolor = ALT_BG)
+        table.cell(dash, 1, 4, trendDot(m5_trend) + trendTxt(m5_trend), text_color = trendClr(m5_trend), text_size = size.small, bgcolor = ALT_BG)
+        table.cell(dash, 2, 4, m5_shift, text_color = TEXT_CLR, text_size = size.small, bgcolor = ALT_BG)
+
+        // Row 5 — ATR
+        table.cell(dash, 0, 5, 'ATR %', text_color = LABEL_CLR, text_size = size.small, bgcolor = ROW_BG)
+        table.cell(dash, 1, 5, str.tostring(math.round(atr_pct, 2)) + '%', text_color = WHITE_CLR, text_size = size.small, bgcolor = ROW_BG)
+        table.merge_cells(dash, 1, 5, 2, 5)
+
+        // Row 6 — Signal Status
+        table.cell(dash, 0, 6, 'Signal Status', text_color = LABEL_CLR, text_size = size.small, bgcolor = ALT_BG)
+        table.cell(dash, 1, 6, sig_txt, text_color = sig_clr, text_size = size.small, bgcolor = ALT_BG)
+        table.merge_cells(dash, 1, 6, 2, 6)
+
+        // Row 7 — FVG Signal
+        table.cell(dash, 0, 7, 'FVG Signal (19%)', text_color = LABEL_CLR, text_size = size.small, bgcolor = ROW_BG)
+        table.cell(dash, 1, 7, os == 1 ? '▲  Bullish FVG' : '▼  Bearish FVG', text_color = os == 1 ? color.teal : color.red, text_size = size.small, bgcolor = ROW_BG)
+        table.merge_cells(dash, 1, 7, 2, 7)
+
+        // Row 8 — MTF Confluence with pips
+        table.cell(dash, 0, 8, 'MTF CONFLUENCE', text_color = color.white, text_size = size.normal, bgcolor = HEADER_BG)
+        table.cell(dash, 1, 8, conf_pips, text_color = conf_clr, text_size = size.normal, bgcolor = HEADER_BG)
+        table.merge_cells(dash, 1, 8, 2, 8)
+
+        // Row 9 — Rahu Kaal
+        table.cell(dash, 0, 9, 'Rahu Kaal Intraday', text_color = LABEL_CLR, text_size = size.small, bgcolor = ROW_BG)
+        table.cell(dash, 1, 9, rk_txt, text_color = rk_clr, text_size = size.small, bgcolor = ROW_BG)
+        table.cell(dash, 2, 9, '(IST Time)', text_color = color.new(color.gray, 30), text_size = size.small, bgcolor = ROW_BG)
+
+        // Row 10 — Astro Macro
+        table.cell(dash, 0, 10, 'Astro Macro (8%)', text_color = color.orange, text_size = size.small, bgcolor = ALT_BG)
+        table.cell(dash, 1, 10, astro_txt + '\n(' + astro_expiry + ')', text_color = astro_clr, text_size = size.small, bgcolor = ALT_BG)
+        table.cell(dash, 2, 10, astro_shift, text_color = color.yellow, text_size = size.small, bgcolor = ALT_BG)
+
+        // Row 11 — Asset DNA
+        table.cell(dash, 0, 11, 'Asset DNA Filter\n(' + dna_expiry + ')', text_color = LABEL_CLR, text_size = size.small, bgcolor = ROW_BG)
+        table.cell(dash, 1, 11, dna_msg, text_color = dna_clr, text_size = size.small, bgcolor = ROW_BG)
+        table.cell(dash, 2, 11, dna_shift, text_color = TEXT_CLR, text_size = size.small, bgcolor = ROW_BG)
+
+        // Row 12 — Ultimate Verdict with probability bar
+        table.cell(dash, 0, 12, 'ULTIMATE VERDICT', text_color = color.white, text_size = size.normal, bgcolor = HEADER_BG)
+        table.cell(dash, 1, 12, verdict_txt, text_color = verdict_clr, text_size = size.normal, bgcolor = HEADER_BG)
+        table.cell(dash, 2, 12, prob_bar, text_color = verdict_clr, text_size = size.small, bgcolor = HEADER_BG)
+
+        // Row 13 — Verdict Log
+        table.cell(dash, 0, 13, 'Verdict Log', text_color = color.yellow, text_size = size.small, bgcolor = ROW_BG)
+        table.cell(dash, 1, 13, verdict_shift, text_color = TEXT_CLR, text_size = size.small, bgcolor = ROW_BG)
+        table.merge_cells(dash, 1, 13, 2, 13)
+
+//─────────────────────────────────────────────────────────────────────────────
+// PLOTS & ALERTS
+//─────────────────────────────────────────────────────────────────────────────
+barcolor(ts_reached ? na : os == 1 and not bull_lvl_reached ? bullCss : os == 0 and not bear_lvl_reached ? bearCss : na)
+plot(ts, 'Trailing Stop', ts_reached or bull or bear ? na : os == 1 ? bullCss : bearCss)
+
+alertcondition(final_prob >= 75, title="High Probability Setup", message="Astro-FVG System: 75%+ Probability setup detected!")
+alertcondition(final_prob == 0, title="Avoid Zone Entered", message="Astro-FVG System: Entered CPT or Vedic Avoid Zone. Stay out of the market.")
