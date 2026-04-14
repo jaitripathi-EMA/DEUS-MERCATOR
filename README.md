@@ -116,7 +116,7 @@ chart — no fixed timeframe lock.
 
 ---
 
-## Indicator 3 — DEUS Sniper Terminal
+## Indicator 3 — DEUS Sniper Terminal (CRYPTO)
 
 A precision execution tool that waits for the highest-probability setups
 before triggering an entry signal.
@@ -158,9 +158,10 @@ before triggering an entry signal.
    timeframes, review the Asset DNA Filter and Astro Macro conditions, and
    wait for the Ultimate Verdict to confirm direction
 3. Avoid trading during **Rahu Kaal** windows flagged on the dashboard
-4. Wait for the **Sniper Terminal** to reach 90%+ confidence and trigger
+4. Else wait for the **Sniper Terminal** to reach 90%+ confidence and trigger
    a signal near a key DPOC/NPOC level
-5. Execute only when all three tools agree
+5. Execute only when heatmap and dashboard tools agree
+6. Sniper terminal is to be used independently only on crypto currencies
 
 ---
 
